@@ -4,6 +4,7 @@
 
 RWTexture2D<float4> Result;
 RWTexture2D<float4> Cells;
+Texture2D<float4> CellsBuffer;
 
 Texture2D<float3> Gradient;
 SamplerState samplerGradient;
@@ -25,9 +26,14 @@ float invLerp(float a, float b, float x)
     return (x - a)/(b - a);
 }
 
+float conv(float x)
+{
+    return exp(-pow((x - 0.5) / (2 * 0.1), 2));
+}
+
 float growth(float x)
 {
-    return exp(-pow((x - 0.3) / (2 * 0.04), 2)) * 2 - 1;
+    return exp(-pow((x - 0.3) / (2 * 0.07), 2)) * 2 - 1;
 }
 
 [numthreads(32,32,1)]
@@ -40,7 +46,7 @@ void Init(uint3 id : SV_DispatchThreadID)
 void Draw(uint3 id : SV_DispatchThreadID)
 {
     float dst = distance(id.xy, PointerPosition.xy);
-    Cells[id.xy] = dst < 50 && Cells[id.xy].r == 0 ? float4(hash12(id.xy), 0, 0, 1) : Cells[id.xy];
+    Cells[id.xy] = dst < 50 && CellsBuffer[id.xy].r == 0 ? float4(hash12(id.xy), 0, 0, 1) : CellsBuffer[id.xy];
 }
 
 [numthreads(32,32,1)]
@@ -54,23 +60,25 @@ void Main(uint3 id : SV_DispatchThreadID)
         for (int x = -12; x < 13; x++)
         {
             float dst = distance(id.xy, id.xy + int2(x, y));
-            float value = Cells[id.xy + int2(x, y)].r;
+            float value = CellsBuffer[id.xy + int2(x, y)].r;
+
+            float filter = conv(abs(dst / 12));
             
             if (dst <= 13)
             {
-                count++;
-                total += value;
+                count += filter;
+                total += value * filter;
             }
         }
     }
 
     total /= count;
     
-    float cellValue = Cells[id.xy].r;
+    float cellValue = CellsBuffer[id.xy].r;
     cellValue += growth(total);
     cellValue = clamp(cellValue, 0.0, 1.0);
-    Cells[id.xy] = float4(cellValue, 0, 0, 1.0);
+    Cells[id.xy] = float4(cellValue, 0, 0, 1);
     
     float3 gradientColor = Gradient.SampleLevel(samplerGradient, float2(cellValue, 0), 0).rgb;
-    Result[id.xy] = float4(gradientColor, 1);
+    Result[id.xy] = float4(cellValue == 0 ? 0 : gradientColor, 1);
 }

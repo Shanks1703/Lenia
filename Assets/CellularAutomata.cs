@@ -18,8 +18,7 @@ public class Compute : MonoBehaviour
 
     private RenderTexture result;
     private RenderTexture cells;
-
-    private bool started = false;
+    private RenderTexture cellsBuffer;
     
     void Start()
     {
@@ -32,9 +31,12 @@ public class Compute : MonoBehaviour
         cells.filterMode = FilterMode.Bilinear;
         cells.wrapMode = TextureWrapMode.Repeat;
         
+        cellsBuffer = RenderTexture.GetTemporary(1920, 1080);
+        cellsBuffer.filterMode = FilterMode.Bilinear;
+        cellsBuffer.wrapMode = TextureWrapMode.Repeat;
+        
         result = RenderTexture.GetTemporary(1920, 1080);
         result.enableRandomWrite = true;
-        result.filterMode = FilterMode.Bilinear;
         result.wrapMode = TextureWrapMode.Repeat;
         
         cs.SetTexture(initKernelID, "Result", result);
@@ -49,11 +51,12 @@ public class Compute : MonoBehaviour
     private void GenerateGradientLookupTexture()
     {
         gradient = new Texture2D(128, 1, TextureFormat.RGB24, false);
+        gradient.wrapMode = TextureWrapMode.Clamp;
 
         for (int i = 0; i < 128; i++)
         {
             Color c = colorGradient.Evaluate((float)i / 127);
-            gradient.SetPixel(i, 1, c);
+            gradient.SetPixel(i, 0, c);
         }
         
         gradient.Apply();
@@ -61,31 +64,32 @@ public class Compute : MonoBehaviour
 
     private void Update()
     {
-        if (!started && Input.GetKey(KeyCode.Mouse0))
-        {
-            if (RectTransformUtility.ScreenPointToLocalPointInRectangle(img.rectTransform, Input.mousePosition, null, out Vector2 position))
-            {
-                cs.SetTexture(drawKernelID, "Result", result);
-                cs.SetTexture(drawKernelID, "Cells", cells);
-                cs.SetTexture(drawKernelID, "Gradient", gradient);
-                cs.SetVector("PointerPosition", position);
-                cs.Dispatch(drawKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
-            }
-        }
-        
-        if (Input.GetKeyDown(KeyCode.Space) && !started)
-        {
-            started = true;
-            StartCoroutine(Step());
-        }
+        Draw();
     }
 
-    IEnumerator Step()
+    private void Draw()
+    {
+        if (!Input.GetKey(KeyCode.Mouse0)) return;
+        if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(img.rectTransform, Input.mousePosition, null,
+                out Vector2 position)) return;
+        
+        Graphics.CopyTexture(cells, cellsBuffer);
+        cs.SetTexture(drawKernelID, "Result", result);
+        cs.SetTexture(drawKernelID, "Cells", cells);
+        cs.SetTexture(drawKernelID, "CellsBuffer", cellsBuffer);
+        cs.SetTexture(drawKernelID, "Gradient", gradient);
+        cs.SetVector("PointerPosition", position);
+        cs.Dispatch(drawKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
+    }
+
+    private IEnumerator Step()
     {
         while (true)
         {
+            Graphics.CopyTexture(cells, cellsBuffer);
             cs.SetTexture(mainKernelID, "Result", result);
             cs.SetTexture(mainKernelID, "Cells", cells);
+            cs.SetTexture(mainKernelID, "CellsBuffer", cellsBuffer);
             cs.SetTexture(mainKernelID, "Gradient", gradient);
             cs.Dispatch(mainKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
             yield return new WaitForSeconds(0.05f);
@@ -102,5 +106,13 @@ public class Compute : MonoBehaviour
     {
         RenderTexture.ReleaseTemporary(result);
         RenderTexture.ReleaseTemporary(cells);
+        RenderTexture.ReleaseTemporary(cellsBuffer);
+    }
+
+    private void OnGUI()
+    {
+        GUI.DrawTexture(new Rect(0, 0, 192, 108), result);
+        GUI.DrawTexture(new Rect(192, 0, 192, 108), cells);
+        GUI.DrawTexture(new Rect(384, 0, 192, 108), cellsBuffer);
     }
 }

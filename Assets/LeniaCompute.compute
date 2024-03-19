@@ -1,0 +1,106 @@
+#pragma kernel Init
+#pragma kernel Draw
+#pragma kernel Main
+#pragma kernel DrawKernel
+
+RWTexture2D<float4> Result;
+RWTexture2D<float4> Cells;
+Texture2D<float4> CellsBuffer;
+
+Texture2D<float3> Gradient;
+SamplerState samplerGradient;
+
+float2 PointerPosition;
+int Timestep;
+int Width;
+int Height;
+int KernelSize;
+
+#define CONV1_MU 0.4
+#define CONV1_SIGMA 0.05
+#define CONV2_MU 0.8
+#define CONV2_SIGMA 0.05
+
+float hash12(float2 p)
+{
+    float3 p3  = frac(float3(p.xyx) * .1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+float invLerp(float a, float b, float x)
+{
+    return (x - a)/(b - a);
+}
+
+float conv(float x, float mu, float sigma)
+{
+    return exp(-pow((x - mu) / (2 * sigma), 2));
+}
+
+float growth(float x)
+{
+    return exp(-pow((x - 0.2) / (2 * 0.02), 2)) * 2 - 1;
+}
+
+float normalizedDistance(int2 pos1, int2 pos2, float maxDistance)
+{
+    return 1.0 - saturate(distance(pos1, pos2) / maxDistance);
+}
+
+[numthreads(32,32,1)]
+void Init(int3 id : SV_DispatchThreadID)
+{
+    float value = normalizedDistance(id.xy, int2(Width * 0.5, Height * 0.5), 100);
+    Cells[id.xy] = float4(value, 0, 0, 1);
+}
+
+[numthreads(32,32,1)]
+void Draw(int3 id : SV_DispatchThreadID)
+{
+    float dst = distance(id.xy, PointerPosition.xy);
+
+    if (dst < 50 && CellsBuffer[id.xy].r == 0)
+    {
+        Cells[id.xy] = float4(hash12(id.xy), 0, 0, 1);
+    }
+}
+
+[numthreads(32,32,1)]
+void Main(int3 id : SV_DispatchThreadID)
+{
+    float totalWeight = 0;
+    float total = 0;
+
+    for (int y = -KernelSize; y <= KernelSize; y++)
+    {
+        for (int x = -KernelSize; x <= KernelSize; x++)
+        {
+            int2 offset = id.xy + int2(x, y);
+            float value = normalizedDistance(id.xy, offset, KernelSize * 0.5);
+            float cellValue = CellsBuffer[offset].r;
+            float kernelWeight = max(conv(value, CONV1_MU, CONV1_SIGMA), conv(value, CONV2_MU, CONV2_SIGMA));
+            
+            totalWeight += kernelWeight;
+            total += cellValue * kernelWeight;
+        }
+    }
+
+    total /= totalWeight;
+    
+    float cellValue = CellsBuffer[id.xy].r;
+    cellValue += growth(total) * 0.5;
+    cellValue = clamp(cellValue, 0.0, 1.0);
+    Cells[id.xy] = float4(cellValue, 0, 0, 1);
+    
+    float3 gradientColor = Gradient.SampleLevel(samplerGradient, float2(cellValue, 0), 0).rgb;
+    Result[id.xy] = float4(cellValue == 0 ? 0 : gradientColor, 1);
+}
+
+[numthreads(8,8,1)]
+void DrawKernel(int3 id : SV_DispatchThreadID)
+{
+    float value = normalizedDistance(id.xy, int2(KernelSize * 0.5, KernelSize * 0.5), KernelSize * 0.5);
+    value = max(conv(value, CONV1_MU, CONV1_SIGMA), conv(value, CONV2_MU, CONV2_SIGMA));
+    Result[id.xy] = float4(value.rrr, 1);
+}

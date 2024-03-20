@@ -1,9 +1,6 @@
 using System;
 using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.Rendering;
-using UnityEngine.Rendering.Universal;
 using UnityEngine.UI;
 
 public class Lenia : MonoBehaviour
@@ -52,7 +49,7 @@ public class Lenia : MonoBehaviour
         
         cs.SetTexture(initKernelID, "Cells", cells);
         cs.Dispatch(initKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
-        
+
         GenerateGradientLookupTexture();
         StartCoroutine(Step());
     }
@@ -90,7 +87,9 @@ public class Lenia : MonoBehaviour
     private void Draw()
     {
         cs.SetInt("KernelSize", kernelSize);
+        cs.SetVector("PointerPosition", Input.mousePosition);
         cs.SetTexture(drawKernelKernelID, "Result", kernel);
+        
         cs.Dispatch(drawKernelKernelID, Mathf.CeilToInt(kernelSize / 8f), Mathf.CeilToInt(kernelSize / 8f), 1);
         
         if (!Input.GetKey(KeyCode.Mouse0)) return;
@@ -100,7 +99,6 @@ public class Lenia : MonoBehaviour
         cs.SetTexture(drawKernelID, "Cells", cells);
         cs.SetTexture(drawKernelID, "CellsBuffer", cellsBuffer);
         cs.SetTexture(drawKernelID, "Gradient", gradient);
-        cs.SetVector("PointerPosition", Input.mousePosition);
         cs.Dispatch(drawKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
     }
 

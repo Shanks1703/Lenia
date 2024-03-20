@@ -16,10 +16,14 @@ int Width;
 int Height;
 int KernelSize;
 
-#define CONV1_MU 0.4
+//orbium 0.5 0.05 0.8 0.05
+
+#define CONV1_MU 0.5
 #define CONV1_SIGMA 0.05
 #define CONV2_MU 0.8
 #define CONV2_SIGMA 0.05
+#define CONV3_MU 0.8
+#define CONV3_SIGMA 0.02
 
 float hash12(float2 p)
 {
@@ -28,19 +32,20 @@ float hash12(float2 p)
     return frac((p3.x + p3.y) * p3.z);
 }
 
-float invLerp(float a, float b, float x)
+float conv(float x, float mu, float sigma, float multiplier = 1)
 {
-    return (x - a)/(b - a);
+    return exp(-pow((x - mu) / (2 * sigma), 2)) * multiplier;
 }
 
-float conv(float x, float mu, float sigma)
+float kernelWeight(float value)
 {
-    return exp(-pow((x - mu) / (2 * sigma), 2));
+    return max(conv(value, CONV1_MU, CONV1_SIGMA), conv(value, CONV2_MU, CONV2_SIGMA));
 }
 
 float growth(float x)
 {
-    return exp(-pow((x - 0.2) / (2 * 0.02), 2)) * 2 - 1;
+    //0.21 0.027
+    return exp(-pow((x - 0.21) / (2 * 0.027), 2)) * 2 - 1;
 }
 
 float normalizedDistance(int2 pos1, int2 pos2, float maxDistance)
@@ -72,24 +77,26 @@ void Main(int3 id : SV_DispatchThreadID)
     float totalWeight = 0;
     float total = 0;
 
-    for (int y = -KernelSize; y <= KernelSize; y++)
+    const int kernelRadius = KernelSize * 0.5;
+    
+    for (int y = -kernelRadius; y <= kernelRadius; y++)
     {
-        for (int x = -KernelSize; x <= KernelSize; x++)
+        for (int x = -kernelRadius; x <= kernelRadius; x++)
         {
             int2 offset = id.xy + int2(x, y);
-            float value = normalizedDistance(id.xy, offset, KernelSize * 0.5);
+            float value = normalizedDistance(id.xy, offset, kernelRadius);
             float cellValue = CellsBuffer[offset].r;
-            float kernelWeight = max(conv(value, CONV1_MU, CONV1_SIGMA), conv(value, CONV2_MU, CONV2_SIGMA));
+            float weight = kernelWeight(value);
             
-            totalWeight += kernelWeight;
-            total += cellValue * kernelWeight;
+            totalWeight += weight;
+            total += cellValue * weight;
         }
     }
 
     total /= totalWeight;
     
     float cellValue = CellsBuffer[id.xy].r;
-    cellValue += growth(total) * 0.5;
+    cellValue += growth(total) * 0.5 ;
     cellValue = clamp(cellValue, 0.0, 1.0);
     Cells[id.xy] = float4(cellValue, 0, 0, 1);
     
@@ -101,6 +108,6 @@ void Main(int3 id : SV_DispatchThreadID)
 void DrawKernel(int3 id : SV_DispatchThreadID)
 {
     float value = normalizedDistance(id.xy, int2(KernelSize * 0.5, KernelSize * 0.5), KernelSize * 0.5);
-    value = max(conv(value, CONV1_MU, CONV1_SIGMA), conv(value, CONV2_MU, CONV2_SIGMA));
-    Result[id.xy] = float4(value.rrr, 1);
+    float weight = kernelWeight(value);
+    Result[id.xy] = float4(weight.rrr, 1);
 }

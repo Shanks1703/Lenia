@@ -2,10 +2,12 @@
 #pragma kernel Draw
 #pragma kernel Main
 #pragma kernel DrawKernel
+#pragma kernel BilinearUpscale
 
 RWTexture2D<float4> Result;
 RWTexture2D<float4> Cells;
-Texture2D<float4> CellsBuffer;
+Texture2D<float4> PreviousCells;
+RWTexture2D<float4> Upscale;
 
 Texture2D<float3> Gradient;
 SamplerState samplerGradient;
@@ -15,6 +17,7 @@ int Timestep;
 int Width;
 int Height;
 int KernelSize;
+int UpscaleFactor;
 
 //orbium 0.5 0.05 0.8 0.05
 
@@ -65,7 +68,7 @@ void Draw(int3 id : SV_DispatchThreadID)
 {
     float dst = distance(id.xy, PointerPosition.xy);
 
-    if (dst < 50 && CellsBuffer[id.xy].r == 0)
+    if (dst < 50 && PreviousCells[id.xy].r == 0)
     {
         Cells[id.xy] = float4(hash12(id.xy), 0, 0, 1);
     }
@@ -85,7 +88,7 @@ void Main(int3 id : SV_DispatchThreadID)
         {
             int2 offset = id.xy + int2(x, y);
             float value = normalizedDistance(id.xy, offset, kernelRadius);
-            float cellValue = CellsBuffer[offset].r;
+            float cellValue = PreviousCells[offset].r;
             float weight = kernelWeight(value);
             
             totalWeight += weight;
@@ -95,13 +98,10 @@ void Main(int3 id : SV_DispatchThreadID)
 
     total /= totalWeight;
     
-    float cellValue = CellsBuffer[id.xy].r;
+    float cellValue = PreviousCells[id.xy].r;
     cellValue += growth(total) * 0.5 ;
     cellValue = clamp(cellValue, 0.0, 1.0);
     Cells[id.xy] = float4(cellValue, 0, 0, 1);
-    
-    float3 gradientColor = Gradient.SampleLevel(samplerGradient, float2(cellValue, 0), 0).rgb;
-    Result[id.xy] = float4(cellValue == 0 ? 0 : gradientColor, 1);
 }
 
 [numthreads(8,8,1)]
@@ -110,4 +110,20 @@ void DrawKernel(int3 id : SV_DispatchThreadID)
     float value = normalizedDistance(id.xy, int2(KernelSize * 0.5, KernelSize * 0.5), KernelSize * 0.5);
     float weight = kernelWeight(value);
     Result[id.xy] = float4(weight.rrr, 1);
+}
+
+[numthreads(32,32,1)]
+void BilinearUpscale(uint3 id : SV_DispatchThreadID)
+{
+    int2 downscaledPosition = int2(floor((float)id.x / UpscaleFactor), floor((float)id.y / UpscaleFactor));
+    
+    float top = Cells[downscaledPosition + int2(0, 1)].r;
+    float bottom = Cells[downscaledPosition + int2(0, -1)].r;
+    float left = Cells[downscaledPosition + int2(-1, 0)].r;
+    float right = Cells[downscaledPosition + int2(1, 0)].r;
+
+    float avg = (top + bottom + left + right) * 0.25;
+
+    float3 gradientColor = Gradient.SampleLevel(samplerGradient, float2(avg, 0), 0).rgb;
+    Upscale[id.xy] = float4(gradientColor, 1);
 }

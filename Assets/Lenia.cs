@@ -1,10 +1,13 @@
 using System;
 using System.Collections;
 using UnityEngine;
+using UnityEngine.Serialization;
 using UnityEngine.UI;
 
 public class Lenia : MonoBehaviour
 {
+    [SerializeField] private int width = 640;
+    [SerializeField] private int height = 360;
     [SerializeField] private float timestep = 0.05f;
     [SerializeField] private int kernelSize = 12;
     [SerializeField] private Gradient colorGradient;
@@ -16,12 +19,14 @@ public class Lenia : MonoBehaviour
     private int drawKernelID;
     private int mainKernelID;
     private int drawKernelKernelID;
+    private int bilinearUpscaleID;
 
-    public RenderTexture result;
     public RenderTexture cells;
-    public RenderTexture cellsBuffer;
+    public RenderTexture previousCells;
     public RenderTexture kernel;
     public RenderTexture upscale;
+
+    private Gradient previousColorGradient;
     
     void Start()
     {
@@ -29,26 +34,26 @@ public class Lenia : MonoBehaviour
         drawKernelID = cs.FindKernel("Draw");
         mainKernelID = cs.FindKernel("Main");
         drawKernelKernelID = cs.FindKernel("DrawKernel");
+        bilinearUpscaleID = cs.FindKernel("BilinearUpscale");
         
-        upscale = RenderTexture.GetTemporary(3840, 2160);
+        upscale = RenderTexture.GetTemporary(Screen.width, Screen.height);
+        upscale.enableRandomWrite = true;
+        upscale.filterMode = FilterMode.Bilinear;
         
         kernel = RenderTexture.GetTemporary(kernelSize, kernelSize);
         kernel.enableRandomWrite = true;
         
-        cells = RenderTexture.GetTemporary(Screen.width, Screen.height);
+        cells = RenderTexture.GetTemporary(width, height);
         cells.enableRandomWrite = true;
         cells.wrapMode = TextureWrapMode.Clamp;
         
-        cellsBuffer = RenderTexture.GetTemporary(Screen.width, Screen.height);
-        cellsBuffer.wrapMode = TextureWrapMode.Clamp;
-        
-        result = RenderTexture.GetTemporary(Screen.width, Screen.height);
-        result.enableRandomWrite = true;
-        result.wrapMode = TextureWrapMode.Clamp;
+        previousCells = RenderTexture.GetTemporary(width, height);
+        previousCells.wrapMode = TextureWrapMode.Clamp;
         
         cs.SetFloat("Timestep", timestep);
-        cs.SetInt("Width", Screen.width);
-        cs.SetInt("Height", Screen.height);
+        cs.SetInt("Width", width);
+        cs.SetInt("Height", height);
+        cs.SetInt("UpscaleFactor", Screen.width / width);
         
         /*cs.SetTexture(initKernelID, "Cells", cells);
         cs.Dispatch(initKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);*/
@@ -59,12 +64,12 @@ public class Lenia : MonoBehaviour
 
     private void GenerateGradientLookupTexture()
     {
-        gradient = new Texture2D(128, 1, TextureFormat.RGB24, false);
+        gradient = new Texture2D(512, 1, TextureFormat.RGB24, false);
         gradient.wrapMode = TextureWrapMode.Clamp;
 
-        for (int i = 0; i < 128; i++)
+        for (int i = 0; i < 512; i++)
         {
-            Color c = colorGradient.Evaluate((float)i / 127);
+            Color c = colorGradient.Evaluate((float)i / (512 - 1));
             gradient.SetPixel(i, 0, c);
         }
         
@@ -73,6 +78,7 @@ public class Lenia : MonoBehaviour
 
     private void Update()
     {
+        if (previousColorGradient == null || previousColorGradient.Equals(colorGradient)) GenerateGradientLookupTexture(); 
         ReallocateResources();
         Draw();
     }
@@ -90,47 +96,50 @@ public class Lenia : MonoBehaviour
     private void Draw()
     {
         cs.SetInt("KernelSize", kernelSize);
-        cs.SetVector("PointerPosition", Input.mousePosition);
-        cs.SetTexture(drawKernelKernelID, "Result", kernel);
+        cs.SetVector("PointerPosition", new Vector2(Input.mousePosition.x / Screen.width * width, Input.mousePosition.y / Screen.height * height));
         
+        cs.SetTexture(drawKernelKernelID, "Result", kernel);
         cs.Dispatch(drawKernelKernelID, Mathf.CeilToInt(kernelSize / 8f), Mathf.CeilToInt(kernelSize / 8f), 1);
         
         if (!Input.GetKey(KeyCode.Mouse0)) return;
         
-        Graphics.CopyTexture(cells, cellsBuffer);
-        cs.SetTexture(drawKernelID, "Result", result);
+        Graphics.CopyTexture(cells, previousCells);
         cs.SetTexture(drawKernelID, "Cells", cells);
-        cs.SetTexture(drawKernelID, "CellsBuffer", cellsBuffer);
-        cs.SetTexture(drawKernelID, "Gradient", gradient);
-        cs.Dispatch(drawKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
+        cs.SetTexture(drawKernelID, "PreviousCells", previousCells);
+        Vector2Int groups = GetThreadGroupSize(width, height);
+        cs.Dispatch(drawKernelID, groups.x, groups.y, 1);
     }
 
     private IEnumerator Step()
     {
         while (true)
         {
-            Graphics.CopyTexture(cells, cellsBuffer);
-            cs.SetTexture(mainKernelID, "Result", result);
+            Graphics.CopyTexture(cells, previousCells);
             cs.SetTexture(mainKernelID, "Cells", cells);
-            cs.SetTexture(mainKernelID, "CellsBuffer", cellsBuffer);
-            cs.SetTexture(mainKernelID, "Gradient", gradient);
-            cs.Dispatch(mainKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);
-            Graphics.Blit(result, upscale);
+            cs.SetTexture(mainKernelID, "PreviousCells", previousCells);
+            Vector2Int groups = GetThreadGroupSize(width, height);
+            cs.Dispatch(mainKernelID, groups.x, groups.y, 1);
+
+            cs.SetTexture(bilinearUpscaleID, "Upscale", upscale);
+            cs.SetTexture(bilinearUpscaleID, "Cells", cells);
+            cs.SetTexture(bilinearUpscaleID, "Gradient", gradient);
+            groups = GetThreadGroupSize(Screen.width, Screen.height);
+            cs.Dispatch(bilinearUpscaleID, groups.x, groups.y, 1);
+            
             yield return new WaitForSeconds(timestep);
         }
     }
 
-    Vector2Int GetThreadGroupSize()
+    Vector2Int GetThreadGroupSize(int w, int h)
     {
         cs.GetKernelThreadGroupSizes(mainKernelID, out uint x, out uint y, out _);
-        return new Vector2Int(Mathf.CeilToInt((float)result.width / x), Mathf.CeilToInt((float)result.height / y));
+        return new Vector2Int(Mathf.CeilToInt((float)w / x), Mathf.CeilToInt((float)h / y));
     }
     
     private void OnDestroy()
     {
-        RenderTexture.ReleaseTemporary(result);
         RenderTexture.ReleaseTemporary(cells);
-        RenderTexture.ReleaseTemporary(cellsBuffer);
+        RenderTexture.ReleaseTemporary(previousCells);
         RenderTexture.ReleaseTemporary(kernel);
         RenderTexture.ReleaseTemporary(upscale);
     }
@@ -140,7 +149,7 @@ public class Lenia : MonoBehaviour
         GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), upscale);
         
         /*GUI.DrawTexture(new Rect(0, 0, 192, 108), cells);
-        GUI.DrawTexture(new Rect(192, 0, 192, 108), cellsBuffer);
+        GUI.DrawTexture(new Rect(192, 0, 192, 108), previousCells);
         GUI.DrawTexture(new Rect(384, 0, 128, 128), kernel);*/
     }
 }

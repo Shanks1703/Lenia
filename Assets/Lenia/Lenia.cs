@@ -6,6 +6,7 @@ using UnityEngine.UI;
 
 public class Lenia : MonoBehaviour
 {
+    [SerializeField] private Material display;
     [SerializeField] private int width = 640;
     [SerializeField] private int height = 360;
     [SerializeField] private float timestep = 0.05f;
@@ -36,7 +37,7 @@ public class Lenia : MonoBehaviour
         drawKernelKernelID = cs.FindKernel("DrawKernel");
         bilinearUpscaleID = cs.FindKernel("BilinearUpscale");
         
-        upscale = RenderTexture.GetTemporary(Screen.width, Screen.height);
+        upscale = RenderTexture.GetTemporary(width, height);
         upscale.enableRandomWrite = true;
         upscale.filterMode = FilterMode.Bilinear;
         
@@ -53,7 +54,9 @@ public class Lenia : MonoBehaviour
         cs.SetFloat("Timestep", timestep);
         cs.SetInt("Width", width);
         cs.SetInt("Height", height);
-        cs.SetInt("UpscaleFactor", Screen.width / width);
+        cs.SetInt("UpscaleFactor", /*Screen.width / width*/ 1);
+
+        display.mainTexture = upscale;
         
         /*cs.SetTexture(initKernelID, "Cells", cells);
         cs.Dispatch(initKernelID, GetThreadGroupSize().x, GetThreadGroupSize().y, 1);*/
@@ -146,7 +149,7 @@ public class Lenia : MonoBehaviour
 
     private void OnGUI()
     {
-        GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), upscale);
+        //GUI.DrawTexture(new Rect(0, 0, Screen.width, Screen.height), cells);
         
         /*GUI.DrawTexture(new Rect(0, 0, 192, 108), cells);
         GUI.DrawTexture(new Rect(192, 0, 192, 108), previousCells);

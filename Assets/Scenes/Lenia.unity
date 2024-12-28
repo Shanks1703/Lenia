@@ -285,13 +285,12 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9338d834638e1894b93cfef8e6c5a864, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  simulate: 1
   width: 512
   height: 512
   mu: 0.21
   sigma: 0.027
   timestep: 0.05
-  kernelSize: 33
+  kernelSize: 128
   colorGradient:
     serializedVersion: 2
     key0: {r: 0, g: 0, b: 0, a: 1}
